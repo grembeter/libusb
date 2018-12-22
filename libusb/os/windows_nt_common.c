@@ -887,6 +887,9 @@ static int windows_handle_events(struct libusb_context *ctx, struct pollfd *fds,
 		usbi_mutex_unlock(&ctx->flying_transfers_lock);
 
 		if (found) {
+
+			usbi_mutex_lock(&itransfer->lock);
+
 			priv->backend->get_overlapped_result(itransfer, &io_result, &io_size);
 
 			usbi_remove_pollfd(ctx, transfer_fd);
@@ -895,6 +898,9 @@ static int windows_handle_events(struct libusb_context *ctx, struct pollfd *fds,
 			// If you don't use the transfer wfd, you run a risk of trying to free a
 			// newly allocated wfd that took the place of the one from the transfer.
 			windows_handle_callback(priv->backend, itransfer, io_result, io_size);
+
+			usbi_mutex_unlock(&itransfer->lock);
+
 		} else {
 			usbi_err(ctx, "could not find a matching transfer for fd %d", fds[i].fd);
 			r = LIBUSB_ERROR_NOT_FOUND;
