@@ -296,6 +296,8 @@ struct libusb_context {
 	libusb_log_cb log_handler;
 #endif
 
+	int event_handle_count;
+
 	/* internal event pipe, used for signalling occurrence of an internal event. */
 	int event_pipe[2];
 
@@ -481,6 +483,7 @@ struct usbi_transfer {
 	 * Note paths taking both this and the flying_transfers_lock must
 	 * always take the flying_transfers_lock first */
 	usbi_mutex_t lock;
+	int ref;
 };
 
 enum usbi_transfer_state_flags {

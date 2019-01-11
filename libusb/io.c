@@ -1270,6 +1270,7 @@ struct libusb_transfer * LIBUSB_CALL libusb_alloc_transfer(
 	usbi_mutex_init(&itransfer->lock);
 	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
 	usbi_dbg("transfer %p", transfer);
+	itransfer->ref = 1;
 	return transfer;
 }
 
@@ -1302,6 +1303,10 @@ void API_EXPORTED libusb_free_transfer(struct libusb_transfer *transfer)
 
 	itransfer = LIBUSB_TRANSFER_TO_USBI_TRANSFER(transfer);
 	usbi_mutex_destroy(&itransfer->lock);
+	itransfer->ref--;
+
+	assert(itransfer->ref == 0);
+
 	free(itransfer);
 }
 
@@ -2082,9 +2087,20 @@ static int handle_events(struct libusb_context *ctx, struct timeval *tv)
 
 	/* prevent attempts to recursively handle events (e.g. calling into
 	 * libusb_handle_events() from within a hotplug or transfer callback) */
+	usbi_mutex_lock(&ctx->event_data_lock);
+	r = 0;
 	if (usbi_handling_events(ctx))
-		return LIBUSB_ERROR_BUSY;
-	usbi_start_event_handling(ctx);
+		r = LIBUSB_ERROR_BUSY;
+	else
+		usbi_start_event_handling(ctx);
+	usbi_mutex_unlock(&ctx->event_data_lock);
+
+	if (r)
+		return r;
+
+	ctx->event_handle_count++;
+
+	assert(ctx->event_handle_count == 1);
 
 	/* there are certain fds that libusb uses internally, currently:
 	 *
@@ -2139,6 +2155,9 @@ static int handle_events(struct libusb_context *ctx, struct timeval *tv)
 	}
 	fds = ctx->pollfds;
 	nfds = ctx->pollfds_cnt;
+	
+	usbi_inc_fd_ref(fds, nfds);
+
 	usbi_mutex_unlock(&ctx->event_data_lock);
 
 	timeout_ms = (int)(tv->tv_sec * 1000) + (tv->tv_usec / 1000);
@@ -2270,7 +2289,9 @@ static int handle_events(struct libusb_context *ctx, struct timeval *tv)
 		usbi_err(ctx, "backend handle_events failed with error %d", r);
 
 done:
+	usbi_dec_fd_ref(fds, nfds);
 	usbi_end_event_handling(ctx);
+	ctx->event_handle_count--;
 	return r;
 }
 
@@ -2679,7 +2700,7 @@ void usbi_remove_pollfd(struct libusb_context *ctx, int fd)
 {
 	struct usbi_pollfd *ipollfd;
 	int found = 0;
-
+	
 	usbi_dbg("remove fd %d", fd);
 	usbi_mutex_lock(&ctx->event_data_lock);
 	list_for_each_entry(ipollfd, &ctx->ipollfds, list, struct usbi_pollfd)
